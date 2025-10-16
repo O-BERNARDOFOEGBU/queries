@@ -1,0 +1,249 @@
+CREATE PROCEDURE sp_account_opening_attempts_summary                    
+    @StartDate DATETIME,                    
+    @EndDate DATETIME                    
+                    
+AS                 
+BEGIN                                       
+
+WITH CTE AS (               
+SELECT row_number() over(partition by mobile_ip_address order by time_first_attempted) AS opening_serial_number,              
+           time_first_attempted,              
+           next_step,              
+           client_ip_address,              
+           mobile_ip_address AS mobile_ip_address_raw,              
+           a.id_number,              
+           a.id_type,              
+           user_provided_phone_number,              
+           channel,              
+           mobile_app_version,              
+           mobile_device_os,              
+           mobile_device_type,              
+           mobile_user_agent_details,              
+           mobile_device_id,              
+           ISNULL(a.mobile_ip_address, (CAST(NEWID() AS varchar(36)) + '_' + CAST(row_number() over (order by (select null)) as varchar))) AS mobile_ip_address,              
+           current_step,              
+           initiation_remark,              
+           kyc_validation_status AS validation_status,              
+           kyc_validation_remark AS validation_remark,              
+           creation_remark,              
+           b.account_number              
+    FROM [10.5.251.138].[Omni_Channel_DB].[dbo].[digital_onboarding_attempts] a with (NOLOCK)              
+    LEFT JOIN [10.5.251.138].[Omni_Channel_DB].[dbo].[digital_onboarding_profile] b with (NOLOCK)              
+      ON a.id_number = b.id_number AND a.id_type = b.id_type              
+    WHERE time_first_attempted BETWEEN @StartDate AND @EndDate              
+      AND (current_step <> 'INITIATION'  OR     ( current_step = 'INITIATION' AND initiation_status NOT IN ('SUCCESSFUL')  )    )              
+)              
+              
+              
+SELECT *        
+ INTO #Temp1          
+    FROM CTE        
+    WHERE         
+ --mobile_ip_address NOT IN (        
+ --       SELECT mobile_ip_address        
+ --       FROM (        
+ --           SELECT a.mobile_ip_address,COUNT(1) AS number_of_attempts,AVG(CAST(DATEDIFF(MINUTE, a.time_first_attempted, ISNULL(b.time_first_attempted, a.time_first_attempted)) AS NUMERIC(18, 2))) AS average_time_difference        
+ --           FROM CTE a (NOLOCK)        
+ --           LEFT JOIN CTE b (NOLOCK)  ON a.mobile_ip_address = b.mobile_ip_address  AND a.opening_serial_number = b.opening_serial_number - 1        
+ --           GROUP BY a.mobile_ip_address        
+ --           HAVING COUNT(1) > 2  AND AVG(CAST(DATEDIFF(MINUTE, a.time_first_attempted, ISNULL(b.time_first_attempted, a.time_first_attempted)) AS NUMERIC(18, 2))) < 1        
+ --       ) x        
+ --   )            
+ --and         
+ user_provided_phone_number NOT IN (        
+        SELECT user_provided_phone_number        
+        FROM (        
+            SELECT  a.user_provided_phone_number,COUNT(1) AS number_of_attempts        
+            FROM CTE a (NOLOCK)        
+            GROUP BY a.user_provided_phone_number        
+            HAVING COUNT(1) > 5        
+        ) x        
+    )        
+          
+              
+              
+----------------------------------------              
+              
+SELECT                     
+    Remark,                    
+    AttemptCount,                    
+    CAST(100.0 * AttemptCount / SUM(AttemptCount) OVER () AS DECIMAL(5, 2)) AS Percentage,                    
+CASE                     
+        WHEN tbl.remark IN (                    
+            'NIN detail not found',      
+			'NIN information not found',                    
+            'Customer already has an account , please login',                    
+            'Sent OTP to preferred number, pending validation',                    
+            'Sorry, you must be at least 18 years old to open an account online. Please visit your nearest FCMB branch for assistance with opening an account.',                    
+            'Initiated facial verification , pending validation',                    
+            'Initiated Journey',                    
+            'Successful primary KYC validation',                    
+            'Failed to validate phone number for primary kyc [FACIAL]',                    
+            'BVN information not found',                    
+            'The customer already exists on Finacle',                    
+            'The provided phone number does not match the registered phone number associated with the BVN.',                    
+            'The provided phone number does not match the registered phone number associated with the NIN.',                    
+            'Date of birth does not match with your BVN',                    
+            'Date of birth does not match with your NIN',                    
+            'Failed to validate phone number for primary kyc',                    
+            'Failed facial verification',                    
+            'Successful resumption',                    
+            'Successfully validated phone number for primary kyc [FACIAL]',                    
+            'Initiated facial verification , pending validation',                    
+            'Successful facial verification',                    
+            'phone number is null',                    
+            'Invalid phone number provided',                
+            'Successfully validated phone number using facial verification',        
+            'Unable to verify your image. Kindly ensure your face is fully captured in the display box, then try again'                     
+         ) OR tbl.remark like '%must be digits%' OR  tbl.remark like '%birthYear must be%' OR tbl.remark like '%age is above allowed age%' OR tbl.remark like 'Referralcode%' 
+		   THEN 'Customer Induced'                   
+                     
+        WHEN tbl.remark IN (                
+            'An error occurred, try again!',                
+            'We are temporarily unable to verify the image , kindly retry again',              
+            'Error response from service',      
+            'Bvn validation service unavailable due to maintenance.'                   
+        ) OR tbl.remark LIKE '%getmati.com%'
+           THEN 'External Induced'              
+                
+          WHEN tbl.remark IN (                      
+            'Account creation failed. No Account Number returned Request Successful',                       
+            'Internal Server Error: Contact System Administrator- Error occured while creating CIF ID',            
+            'facial verification initiation| Unable to upload image',
+			'No record found',
+			'sleep interrupted',
+			'Finacle System Error Occoured!!! Please contact System Administrator.'
+        ) OR tbl.remark LIKE 'I/O error on POST request%' 
+		  OR tbl.remark LIKE 'Error creating account at this time%'
+		  OR tbl.remark LIKE 'Error while extracting response for type%' 
+		  --OR tbl.remark LIKE '%getmati.com%'
+		THEN 'System Induced'                    
+                     
+        WHEN tbl.remark IN (                    
+            'Account successfully created'                    
+        )                    
+        THEN 'Successful'                    
+                     
+        ELSE 'Unclassified'                    
+    END AS Remark_classification,                    
+                     
+    CASE                     
+         WHEN tbl.remark = 'phone number is null'                      
+            THEN 'No phone number provided by the customer'                      
+        WHEN tbl.remark = 'Invalid phone number provided' OR tbl.remark like '%must be digits%'                      
+            THEN 'Customer failed to provide a valid phone number'                      
+        WHEN tbl.remark = 'Account successfully created'                    
+            THEN 'The account was created successfully'                      
+        WHEN tbl.remark = 'NIN detail not found'                      
+            THEN 'Missing or invalid customer-supplied NIN'     
+        WHEN tbl.remark = 'NIN information not found'                      
+            THEN 'Missing or invalid customer-supplied NIN'                     
+        WHEN tbl.remark = 'Customer already has an account , please login'                      
+           THEN 'Customer already exists in system'                      
+        WHEN tbl.remark = 'Sent OTP to preferred number, pending validation'                      
+            THEN 'Customer needs to complete OTP step'                    
+        WHEN tbl.remark = 'Sorry, you must be at least 18 years old to open an account online. Please visit your nearest FCMB branch for assistance with opening an account.'                   
+            THEN 'Customer is underage'                      
+        WHEN tbl.remark = 'Initiated facial verification , pending validation'                      
+            THEN 'Customer action required to complete validation'                      
+        WHEN tbl.remark = 'Account creation failed. No Account Number returned Request Successful'                      
+            THEN 'Backend failed to return expected account number'                      
+        WHEN tbl.remark = 'Initiated Journey'                      
+            THEN 'Customer started onboarding process'                      
+        WHEN tbl.remark = 'Successful primary KYC validation'                      
+            THEN 'Customer provided valid KYC info'                      
+        WHEN tbl.remark = 'Failed to validate phone number for primary kyc [FACIAL]'                      
+            THEN 'Customer’s phone number doesn’t match'                      
+        WHEN tbl.remark = 'BVN information not found'                      
+            THEN 'Invalid or missing BVN from customer'                      
+        WHEN tbl.remark = 'The customer already exists on Finacle'                      
+            THEN 'Duplicate customer entry'                      
+        WHEN tbl.remark = 'The provided phone number does not match the registered phone number associated with the BVN.'                      
+            THEN 'Mismatch in customer data'                      
+        WHEN tbl.remark = 'The provided phone number does not match the registered phone number associated with the NIN.'                      
+            THEN 'Mismatch in customer data'                      
+        WHEN tbl.remark = 'Internal Server Error: Contact System Administrator- Error occured while creating CIF ID'                      
+            THEN 'Server or system-side failure'                      
+        WHEN tbl.remark = 'Date of birth does not match with your BVN'                      
+            THEN 'Data mismatch from customer'                      
+        WHEN tbl.remark = 'Date of birth does not match with your NIN'                      
+            THEN 'Data mismatch from customer'                      
+        WHEN tbl.remark = 'Failed to validate phone number for primary kyc'                      
+            THEN 'Phone number not verified'                      
+        WHEN tbl.remark = 'Failed facial verification'                      
+            THEN 'Customer facial mismatch'                      
+        WHEN tbl.remark = 'Unable to verify your image. Kindly ensure your face is fully captured in the display box, then try again'                    
+            THEN 'Image failed quality checks – poor lighting, misalignment, or incomplete face'             
+        WHEN tbl.remark = 'An error occurred, try again!'                  
+            THEN 'Rova API not reachable'    
+        --WHEN tbl.remark = 'Referralcode must be at least 4 characters long'                  
+            --THEN 'Incorret referral code / Incorrectly inputted referral code'                  
+        WHEN tbl.remark = 'Error response from service'                  
+            THEN 'Rova API was unavailable'                  
+        WHEN tbl.remark = 'We are temporarily unable to verify the image , kindly retry again'                  
+            THEN 'Timeout awaiting response from Metamap'       
+        WHEN tbl.remark = 'Successfully validated phone number using facial verification'                
+            THEN 'Customer not proceeding after verification'            
+        WHEN tbl.remark = 'facial verification initiation| Unable to upload image'                
+            THEN 'System failed to upload customer image'
+		WHEN tbl.remark LIKE '%getmati.com%'
+		    THEN 'Timeout awaiting response from Metamap'
+        WHEN tbl.remark LIKE 'I/O error on POST request%'                      
+            THEN 'System integration or connectivity failure'                  
+    	WHEN tbl.remark LIKE '%birthYear must be%'         
+      	    THEN 'Customer ID contains invalid date of birth'  
+        WHEN tbl.remark LIKE '%age is above allowed age%'  
+            THEN 'Age is not allowed' 
+		WHEN tbl.remark LIKE 'Referralcode%'                  
+            THEN 'Incorret referral code / Incorrectly inputted referral code'
+		WHEN tbl.remark LIKE 'Error while extracting response for type%'
+		    THEN 'Integration error'
+        WHEN tbl.remark = 'Bvn validation service unavailable due to maintenance.'  
+            THEN 'NIBBS BVN Maintenance' 
+		WHEN tbl.remark = 'No record found'  
+            THEN 'Empty validation record at validation' 
+		WHEN tbl.remark = 'sleep interrupted'  
+            THEN 'Interruption in Kyc validation' 
+		WHEN tbl.remark LIKE 'Error creating account at this time%'	
+		    THEN 'Unable to reach Finacle at the moment!'
+		WHEN tbl.remark = 'Finacle System Error Occoured!!! Please contact System Administrator.'      
+           THEN 'Finacle System Error'
+        ELSE 'Requires more context'                      
+    END AS Remark_reason                    
+                     
+FROM (                    
+                        
+SELECT                     
+        CASE                     
+            WHEN account_number is not null THEN 'Account successfully created'                    
+            WHEN current_step IN ('INITIATION') THEN initiation_remark                    
+            WHEN current_step IN ('KYC_VALIDATION', 'RESUMPTION', 'FACIAL_VALIDATION') AND account_number is null THEN validation_remark                    
+            WHEN current_step IN ('CREATION') THEN creation_remark                    
+            WHEN current_step IN ('PROFILING') THEN creation_remark                    
+            ELSE initiation_remark                     
+        END AS remark,                    
+        COUNT(1) AS AttemptCount                    
+    FROM                     
+        #Temp1 (NOLOCK)                
+    GROUP BY                     
+  CASE                     
+    WHEN account_number is not null THEN 'Account successfully created'                    
+        WHEN current_step IN ('INITIATION') THEN initiation_remark                    
+        WHEN current_step IN ('KYC_VALIDATION', 'RESUMPTION', 'FACIAL_VALIDATION') AND account_number is null THEN validation_remark                    
+        WHEN current_step IN ('CREATION') THEN creation_remark                    
+        WHEN current_step IN ('PROFILING') THEN creation_remark                    
+        ELSE initiation_remark                      
+    END                    
+) tbl                    
+                     
+--OR tbl.remark LIKE                   
+ORDER BY                   
+    tbl.AttemptCount DESC;              
+            
+----------------------------------------            
+            
+DROP TABLE #Temp1                
+              
+                      
+              
+END;
