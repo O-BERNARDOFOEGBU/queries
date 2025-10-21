@@ -35,7 +35,7 @@ CASE
             'Successful facial verification',                      
             'phone number is null',                      
             'Invalid phone number provided',                  
-            --'Successfully validated phone number using facial verification',                   
+            'Successfully validated phone number using facial verification',                   
             'Unable to verify your image. Kindly ensure your face is fully captured in the display box, then try again' 
         ) OR tbl.remark like '%must be digits%' 
           OR  tbl.remark like '%birthYear must be%' 
@@ -57,7 +57,7 @@ CASE
             'Internal Server Error: Contact System Administrator- Error occured while creating CIF ID',            
             'facial verification initiation| Unable to upload image',
 			'No record found',
-			'Successfully validated phone number using facial verification', 
+			--'Successfully validated phone number using facial verification', 
 			'sleep interrupted',
 			'Finacle System Error Occoured!!! Please contact System Administrator.'
         ) OR tbl.remark LIKE 'I/O error on POST request%' 
