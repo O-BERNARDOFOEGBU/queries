@@ -41,7 +41,7 @@ CASE
           OR  tbl.remark like '%birthYear must be%' 
           OR tbl.remark like '%age is above allowed age%' 
           OR tbl.remark like 'Referralcode%' 
-          OR tbl.remark like '%age is below allowed age%'  
+          OR tbl.remark like '%age is%'  
 		   THEN 'Customer Induced'                      
                        
         WHEN tbl.remark IN (                  
@@ -62,7 +62,8 @@ CASE
 			'Finacle System Error Occoured!!! Please contact System Administrator.'
         ) OR tbl.remark LIKE 'I/O error on POST request%' 
 		  OR tbl.remark LIKE 'Error creating account at this time%'
-		  OR tbl.remark LIKE 'Error while extracting response for type%' 
+		  OR tbl.remark LIKE 'Error while extracting response for type%'
+          OR tbl.remark LIKE 'For input string: "W0205%'
 		  --OR tbl.remark LIKE '%getmati.com%'
 		THEN 'System Induced'                      
                        
@@ -141,7 +142,7 @@ CASE
             THEN 'System integration or connectivity failure'                  
     	WHEN tbl.remark LIKE '%birthYear must be%'         
       	    THEN 'Customer ID contains invalid date of birth'  
-        WHEN tbl.remark LIKE '%age is above allowed age%'  
+        WHEN tbl.remark LIKE '%age is%'  
             THEN 'Age is not allowed' 
 		WHEN tbl.remark LIKE 'Referralcode%'                  
             THEN 'Incorret referral code / Incorrectly inputted referral code'
@@ -155,6 +156,8 @@ CASE
             THEN 'Interruption in Kyc validation' 
 		WHEN tbl.remark LIKE 'Error creating account at this time%'	
 		    THEN 'Unable to reach Finacle at the moment!'
+        WHEN tbl.remark LIKE 'For input string: "W0205%'
+            THEN 'Account already exist'
 		WHEN tbl.remark = 'Finacle System Error Occoured!!! Please contact System Administrator.'      
            THEN 'Finacle System Error'
         ELSE 'Requires more context'                      
